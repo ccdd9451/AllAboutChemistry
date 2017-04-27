@@ -17,7 +17,7 @@ env = environ
 
 def main():
     import sys, os
-    if os.path.isdir(BASEDIR):
+    if os.path.isdir(BASEDIR) or len(sys.argv) = 1:
         singlerun()
     else:
         print('Please Setup queue by calling queue_add method')
