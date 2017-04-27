@@ -1,35 +1,54 @@
-#!/home/kh621/.installed/anaconda/bin/python
+#!/usr/bin/env python
+# encoding utf-8
 
-from xilio import write, read
-from subprocess import call, Popen
+from os import environ
 from pathlib import Path
-import sys
+from subprocess import call, Popen, DEVNULL
+from contextlib import contextmanager
+
+from xilio import write, read, load, dump
 
 BASEDIR = Path('/home/kh621/PeptideSim')
 DEBUG = False
+MD_NSTLIM = 5E6
+
+env = environ
 
 def main():
-    singlerun()
+    import sys
+    if os.path.isdir(BASEDIR):
+        singlerun()
+    else:
+        print('Please Setup queue by calling queue_add method')
+        call(['python', '-i', __file__], env=env)
+    sys.exit(0)
 
 
+def queueadd(queues):
+    if not isinstance(queues, list):
+        raise ValueError('Queue must be lists!')
+    try:
+        with shelf_with_locker() as shelf:
+            shelf['queued'].expand(queues)
+    except FileNotFoundError:
+        pep_queue = BASEDIR / 'pep_queue'
+        qdict = {'queued': queues,
+                'running': [],
+                'finished': {}}
+        dump(pep_queue, qdict)
 
 def singlerun():
-    from xilio import load, dump
-    from os import environ
-    env = environ
     if not env.get('CUDA_VISIBLE_DEVICES'):
-        process_num = input(
-            'Please specify the gpu index for calculations:')
+        process_num = input('Please specify the gpu index for calculations:')
         env['CUDA_VISIBLE_DEVICES'] = str(process_num)
-        topfile = BASEDIR/'top'
+        topfile = BASEDIR / 'top'
         try:
             top = load(topfile)
-        except:
+        except FileNotFoundError:
             top = set()
 
         if process_num in top:
-            raise OSError(
-                'GPU line {} is busy!'.format(process_num))
+            raise OSError('GPU line {} is busy!'.format(process_num))
         else:
             top.add(process_num)
         dump(topfile, top)
@@ -40,12 +59,12 @@ def singlerun():
         workpep = shelf['queued'].pop()
         shelf['running'].append(workpep)
 
-    workdir = BASEDIR/workpep
+    workdir = BASEDIR / workpep
     pepname = convert_short_to_long(workpep)
 
     setupfiles(workdir, pepname, env)
     if not DEBUG:
-        call(['./ambsc'], cwd=workdir, env=env)
+        call(['./ambsc'], cwd=workdir, env=env, stdout=DEVNULL)
         eng = parseptot(workdir)
     else:
         eng = None
@@ -58,61 +77,60 @@ def singlerun():
 
     if process_num in load(topfile):
         Popen([__file__], cwd=BASEDIR, env=env)
-    sys.exit(0)
 
-from contextlib import contextmanager
+
+
+
 @contextmanager
 def shelf_with_locker():
-    from shelve import open as sopen
     from fcntl import flock, LOCK_EX, LOCK_UN
-    shelf_locker = BASEDIR/'slf.lck'
-    pep_queue = BASEDIR/'pep_queue'
+    shelf_locker = BASEDIR / 'slf.lck'
+    pep_queue = BASEDIR / 'pep_queue'
     try:
-        lck = open(shelf_locker, w)
+        lck = open(shelf_locker, 'w')
         flock(lck, LOCK_EX)
         shelf = load(pep_queue)
         yield shelf
+        dump(pep_queue, shelf)
     except:
         raise
     finally:
-        dump(pep_queue, shelf)
         flock(lck, LOCK_UN)
         lck.close()
-    return workpep
+
 
 def parseptot(directory):
-    line = read(directory/'Analysis'/'summary_Avg.EPTOT')
-    return line.split()[1]
+    line = read(directory / 'Analysis' / 'summary_avg.EPTOT')
+    return float(line.split()[1])
+
 
 def setupfiles(directory, pseqs, env):
     import os
     try:
         os.mkdir(directory)
-    except OSError as e:
-    # Skip mkdir if dir is exist, only print out error
-        print(e)
-    write(directory/'ambsc', script, executable=True)
-    write(directory/'tlsc', tleapfile.format(names=pseqs))
-    call(['tleap','-s','-f','tlsc'], cwd=directory, env=env)
+    except FileExistsError as err:
+        # Skip mkdir if dir is exist, only print out error
+        print('War: DIR EXIST ', err)
+    write(directory / 'ambsc', script, executable=True)
+    write(directory / 'tlsc', tleapfile.format(names=pseqs))
+    call(['tleap', '-s', '-f', 'tlsc'],
+        cwd=directory, env=env, stdout=DEVNULL)
 
-
-Aminonames = (
-    'ALA ARG ASN ASP CYS ' +
-    'GLU GLN GLY HIS HYP ' +
-    'ILE LEU LYS MET PHE ' +
-    'PRO GLP SER THR TRP ' +
-    'TYR VAL').split()
-Aminoshorts = \
+aminonames = (
+    'ALA ARG ASN ASP CYS ' + 'GLU GLN GLY HIS HYP ' + 'ILE LEU LYS MET PHE ' +
+    'PRO GLP SER THR TRP ' + 'TYR VAL').split()
+aminoshorts = \
     'ARNDCEQGHOILKMFPUSTWYV'
-assert len(Aminonames) == len(Aminoshorts)
-Aminodict = { s:n for s, n in \
-        zip(Aminoshorts, Aminonames)}
+assert len(aminonames) == len(aminoshorts)
+aminodict = {s:n for s, n in \
+        zip(aminoshorts, aminonames)}
+
 
 def convert_short_to_long(short):
-    long = map(lambda x: Aminodict[x],
-            list(short))
-    long = ' '.join(long)
+    long_items = map(lambda x: aminodict[x], list(short))
+    long = ' '.join(long_items)
     return long
+
 
 tleapfile = """\
 source leaprc.ff14SB
@@ -191,7 +209,7 @@ echo \\
   imin=0, !Choose a molecular dynamics (MD) run
   ntx=5, !Coordinates and velocities are read from rst file
   irest=1, !Restart the simulation from rst file
-  nstlim=5000000, !Number of MD steps in run // 5e6 frames are 10 ps
+  nstlim=MD_NSTLIM, !Number of MD steps in run // 5e6 frames are 10 ps
   dt=0.002, !Time step in picoseconds
   ntf=2, !Setting to not calculate force for SHAKE constrained bonds
   ntc=2, !Enable SHAKE to constrain all bonds involving hydrogen
@@ -239,7 +257,7 @@ cleanupfiles
 ############ Script running ends ############
 echo 'end at: '`date` >>timelog
 exit
-"""
+""".replace('MD_NSTLIM', str(MD_NSTLIM))
 
 if __name__ == '__main__':
     main()
