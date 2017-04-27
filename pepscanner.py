@@ -7,7 +7,8 @@ import sys
 
 BASEDIR = Path('/home/kh621/PeptideSim')
 
-def main()
+def main():
+    singlerun()
 
 
 
@@ -75,9 +76,16 @@ def shelf_with_locker():
     return workpep
 
 def setupfiles(directory, pseqs, env):
+    import os
+    try:
+        os.mkdir(directory)
+    except OSError as e:
+    # Skip mkdir if dir is exist, only print out error
+        print(e)
     write(directory/'ambsc', script, executable=True)
     write(directory/'tlsc', tleapfile.format(names=pseqs))
     call(['tleap','-s','-f','tlsc'], cwd=directory, env=env)
+
 
 Aminonames = (
     'ALA ARG ASN ASP CYS ' +
@@ -191,6 +199,19 @@ echo \\
  /' > 3in
 }
 
+processdat(){
+mkdir Analysis; cd Analysis
+process_mdout.perl ../3out
+cd ..
+}
+
+cleanupfiles(){
+mkdir archieved
+mv 1* archieved
+mv 2* archieved
+mv tlsc archieved
+}
+
 touch date
 echo 'start at: '`date` >>timelog
 ############ Script starts here #############
@@ -200,8 +221,8 @@ echo 'start at: '`date` >>timelog
 
 expandfiles
 callcuda
-mkdir Analysis; cd Analysis
-process_mdout.perl ../3out
+processdat
+cleanupfiles
 
 #
 #
