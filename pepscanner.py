@@ -14,17 +14,19 @@ MD_NSTLIM = 5E6
 
 env = environ
 
+
 def main():
-    import sys
+    import sys, os
     if os.path.isdir(BASEDIR):
         singlerun()
     else:
         print('Please Setup queue by calling queue_add method')
+        os.mkdir(BASEDIR)
         call(['python', '-i', __file__], env=env)
     sys.exit(0)
 
 
-def queueadd(queues):
+def queue_add(queues):
     if not isinstance(queues, list):
         raise ValueError('Queue must be lists!')
     try:
@@ -32,10 +34,9 @@ def queueadd(queues):
             shelf['queued'].expand(queues)
     except FileNotFoundError:
         pep_queue = BASEDIR / 'pep_queue'
-        qdict = {'queued': queues,
-                'running': [],
-                'finished': {}}
+        qdict = {'queued': queues, 'running': [], 'finished': {}}
         dump(pep_queue, qdict)
+
 
 def singlerun():
     if not env.get('CUDA_VISIBLE_DEVICES'):
@@ -79,8 +80,6 @@ def singlerun():
         Popen([__file__], cwd=BASEDIR, env=env)
 
 
-
-
 @contextmanager
 def shelf_with_locker():
     from fcntl import flock, LOCK_EX, LOCK_UN
@@ -113,8 +112,8 @@ def setupfiles(directory, pseqs, env):
         print('War: DIR EXIST ', err)
     write(directory / 'ambsc', script, executable=True)
     write(directory / 'tlsc', tleapfile.format(names=pseqs))
-    call(['tleap', '-s', '-f', 'tlsc'],
-        cwd=directory, env=env, stdout=DEVNULL)
+    call(['tleap', '-s', '-f', 'tlsc'], cwd=directory, env=env, stdout=DEVNULL)
+
 
 aminonames = (
     'ALA ARG ASN ASP CYS ' + 'GLU GLN GLY HIS HYP ' + 'ILE LEU LYS MET PHE ' +
