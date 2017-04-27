@@ -1,11 +1,12 @@
 #!/home/kh621/.installed/anaconda/bin/python
 
-from xilio import write
+from xilio import write, read
 from subprocess import call, Popen
 from pathlib import Path
 import sys
 
 BASEDIR = Path('/home/kh621/PeptideSim')
+DEBUG = False
 
 def main():
     singlerun()
@@ -43,11 +44,15 @@ def singlerun():
     pepname = convert_short_to_long(workpep)
 
     setupfiles(workdir, pepname, env)
-    call(['./ambsc'], cwd=workdir, env=env)
+    if not DEBUG:
+        call(['./ambsc'], cwd=workdir, env=env)
+        eng = parseptot(workdir)
+    else:
+        eng = None
 
     with shelf_with_locker() as shelf:
         shelf['running'].remove(workpep)
-        shelf['finished'][workpep] = None
+        shelf['finished'][workpep] = eng
         # Will update here to directly get the protential
         # energy after simulation finishs
 
@@ -74,6 +79,10 @@ def shelf_with_locker():
         flock(lck, LOCK_UN)
         lck.close()
     return workpep
+
+def parseptot(directory):
+    line = read(directory/'Analysis'/'summary_Avg.EPTOT')
+    return line.split()[1]
 
 def setupfiles(directory, pseqs, env):
     import os
