@@ -46,7 +46,7 @@ def queue_add(queues):
 def release_thread(process_num):
     # This would be a interface to control thread numbers.
     # In future, the description of thread will be added.
-    clean_up_thread(process_num)
+    clean_up_thread(str(process_num))
 
 
 def singlerun():
