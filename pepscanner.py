@@ -17,13 +17,13 @@ env = environ
 scanner_self = os.path.join(sys.path[0], __file__)
 topfile = BASEDIR / '.top'
 
+
 def main():
-    if (os.path.exists(BASEDIR / 'pep_queue') and
-            not sys.argv[1:]):
+    if (os.path.exists(BASEDIR / 'pep_queue') and not sys.argv[1:]):
         singlerun()
     else:
         print('Please Setup queue by calling queue_add method by')
-        print('running python with\n\t import',__file__[:-3])
+        print('running python with\n\t import', __file__[:-3])
         # Tried to invoke a python shell here, but failed.
         # os.execvpe('sh', ['python','-i', __file__], env)
     sys.exit(0)
@@ -42,10 +42,12 @@ def queue_add(queues):
         qdict = {'queued': queues, 'running': {}, 'finished': {}}
         dump(pep_queue, qdict)
 
+
 def release_thread(process_num):
-# This would be a interface to control thread numbers.
-# In future, the description of thread will be added.
+    # This would be a interface to control thread numbers.
+    # In future, the description of thread will be added.
     clean_up_thread(process_num)
+
 
 def singlerun():
 
@@ -74,8 +76,6 @@ def singlerun():
     run_next(process_num)
 
 
-
-
 @contextmanager
 def shelf_with_locker():
     from fcntl import flock, LOCK_EX, LOCK_UN
@@ -93,6 +93,7 @@ def shelf_with_locker():
         flock(lck, LOCK_UN)
         lck.close()
 
+
 def get_pep_from_queue(process_num):
     with shelf_with_locker() as shelf:
         if not shelf['queued']:
@@ -102,10 +103,12 @@ def get_pep_from_queue(process_num):
         shelf['running'][workpep] = process_num
     return workpep
 
+
 def pep_finish_and_store_result(workpep, eng):
     with shelf_with_locker() as shelf:
         shelf['running'].pop(workpep)
         shelf['finished'][workpep] = eng
+
 
 def add_thread(process_num):
     try:
@@ -120,14 +123,13 @@ def add_thread(process_num):
     dump(topfile, top)
 
 
-
-
 def run_next(process_num):
-    try :
+    try:
         if process_num in load(topfile):
             Popen([scanner_self], cwd=BASEDIR, env=env)
     except FileNotFoundError:
         return
+
 
 def clean_up_thread(process_num):
     try:
@@ -144,7 +146,6 @@ def parseptot(directory):
 
 
 def setupfiles(directory, pseqs, env):
-    import os
     try:
         os.mkdir(directory)
     except FileExistsError as err:
@@ -156,9 +157,8 @@ def setupfiles(directory, pseqs, env):
     call(['tleap', '-s', '-f', 'tlsc'], cwd=directory, env=env, stdout=DEVNULL)
 
 
-aminonames = (
-    'ALA ARG ASN ASP CYS ' + 'GLU GLN GLY HIS HYP ' + 'ILE LEU LYS MET PHE ' +
-    'PRO VAL SER THR TRP ' + 'TYR').split()
+aminonames = ('ALA ARG ASN ASP CYS ' + 'GLU GLN GLY HIS HYP ' +
+              'ILE LEU LYS MET PHE ' + 'PRO VAL SER THR TRP ' + 'TYR').split()
 aminoshorts = \
     'ARNDCEQGHOILKMFPVSTWY'
 assert len(aminonames) == len(aminoshorts)
