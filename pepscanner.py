@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # encoding utf-8
 
+import sys, os
 from os import environ
 from pathlib import Path
 from subprocess import call, Popen, DEVNULL
@@ -13,20 +14,24 @@ DEBUG = False
 MD_NSTLIM = 5E6
 
 env = environ
-
+scanner_self = os.path.join(sys.path[0], __file__)
+topfile = BASEDIR / '.top'
 
 def main():
-    import sys, os
-    if os.path.isdir(BASEDIR) or not sys.argv[1:]:
+    if (os.path.exists(BASEDIR / 'pep_queue') and
+            not sys.argv[1:]):
         singlerun()
     else:
-        print('Please Setup queue by calling queue_add method')
-        os.mkdir(BASEDIR)
-        call(['python', '-i', __file__], env=env)
+        print('Please Setup queue by calling queue_add method by')
+        print('running python with\n\t import',__file__[:-3])
+        # Tried to invoke a python shell here, but failed.
+        # os.execvpe('sh', ['python','-i', __file__], env)
     sys.exit(0)
 
 
 def queue_add(queues):
+    if not os.path.isdir(BASEDIR):
+        os.mkdir(BASEDIR)
     if not isinstance(queues, list):
         raise ValueError('Queue must be lists!')
     try:
@@ -34,56 +39,47 @@ def queue_add(queues):
             shelf['queued'].expand(queues)
     except FileNotFoundError:
         pep_queue = BASEDIR / 'pep_queue'
-        qdict = {'queued': queues, 'running': [], 'finished': {}}
+        qdict = {'queued': queues, 'running': {}, 'finished': {}}
         dump(pep_queue, qdict)
 
+def release_thread(process_num):
+# This would be a interface to control thread numbers.
+# In future, the description of thread will be added.
+    clean_up_thread(process_num)
 
 def singlerun():
+
+    if not env.get('AMBERHOME'):
+        raise OSError('Amber environments not set, quit')
+
     if not env.get('CUDA_VISIBLE_DEVICES'):
         process_num = input('Please specify the gpu index for calculations:')
         env['CUDA_VISIBLE_DEVICES'] = str(process_num)
-        topfile = BASEDIR / 'top'
-        try:
-            top = load(topfile)
-        except FileNotFoundError:
-            top = set()
+        add_thread(process_num)
+        Popen([scanner_self], cwd=BASEDIR, env=env)
+        return
 
-        if process_num in top:
-            raise OSError('GPU line {} is busy!'.format(process_num))
-        else:
-            top.add(process_num)
-        dump(topfile, top)
     else:
         process_num = env.get('CUDA_VISIBLE_DEVICES')
 
-    with shelf_with_locker() as shelf:
-        workpep = shelf['queued'].pop()
-        shelf['running'].append(workpep)
-
+    workpep = get_pep_from_queue(process_num)
     workdir = BASEDIR / workpep
     pepname = convert_short_to_long(workpep)
-
     setupfiles(workdir, pepname, env)
-    if not DEBUG:
-        call(['./ambsc'], cwd=workdir, env=env, stdout=DEVNULL)
-        eng = parseptot(workdir)
-    else:
-        eng = None
 
-    with shelf_with_locker() as shelf:
-        shelf['running'].remove(workpep)
-        shelf['finished'][workpep] = eng
-        # Will update here to directly get the protential
-        # energy after simulation finishs
+    call(['./ambsc'], cwd=workdir, env=env, stdout=DEVNULL)
+    eng = parseptot(workdir)
 
-    if process_num in load(topfile):
-        Popen([__file__], cwd=BASEDIR, env=env)
+    pep_finish_and_store_result(workpep, eng)
+    run_next(process_num)
+
+
 
 
 @contextmanager
 def shelf_with_locker():
     from fcntl import flock, LOCK_EX, LOCK_UN
-    shelf_locker = BASEDIR / 'slf.lck'
+    shelf_locker = BASEDIR / '.slf.lck'
     pep_queue = BASEDIR / 'pep_queue'
     try:
         lck = open(shelf_locker, 'w')
@@ -96,6 +92,50 @@ def shelf_with_locker():
     finally:
         flock(lck, LOCK_UN)
         lck.close()
+
+def get_pep_from_queue(process_num):
+    with shelf_with_locker() as shelf:
+        if not shelf['queued']:
+            clean_up_thread(process_num)
+            sys.exit(0)
+        workpep = shelf['queued'].pop()
+        shelf['running'][workpep] = process_num
+    return workpep
+
+def pep_finish_and_store_result(workpep, eng):
+    with shelf_with_locker() as shelf:
+        shelf['running'].pop(workpep)
+        shelf['finished'][workpep] = eng
+
+def add_thread(process_num):
+    try:
+        top = load(topfile)
+    except FileNotFoundError:
+        top = set()
+
+    if process_num in top:
+        raise OSError('GPU line {} is busy!'.format(process_num))
+    else:
+        top.add(process_num)
+    dump(topfile, top)
+
+
+
+
+def run_next(process_num):
+    try :
+        if process_num in load(topfile):
+            Popen([scanner_self], cwd=BASEDIR, env=env)
+    except FileNotFoundError:
+        return
+
+def clean_up_thread(process_num):
+    try:
+        top = load(topfile)
+    except FileNotFoundError:
+        top = set()
+    top.discard(process_num)
+    dump(topfile, top)
 
 
 def parseptot(directory):
@@ -110,16 +150,17 @@ def setupfiles(directory, pseqs, env):
     except FileExistsError as err:
         # Skip mkdir if dir is exist, only print out error
         print('War: DIR EXIST ', err)
-    write(directory / 'ambsc', script, executable=True)
+    ambscript = script.replace('MD_NSTLIM', str(int(MD_NSTLIM)))
+    write(directory / 'ambsc', ambscript, executable=True)
     write(directory / 'tlsc', tleapfile.format(names=pseqs))
     call(['tleap', '-s', '-f', 'tlsc'], cwd=directory, env=env, stdout=DEVNULL)
 
 
 aminonames = (
     'ALA ARG ASN ASP CYS ' + 'GLU GLN GLY HIS HYP ' + 'ILE LEU LYS MET PHE ' +
-    'PRO GLP SER THR TRP ' + 'TYR VAL').split()
+    'PRO VAL SER THR TRP ' + 'TYR').split()
 aminoshorts = \
-    'ARNDCEQGHOILKMFPUSTWYV'
+    'ARNDCEQGHOILKMFPVSTWY'
 assert len(aminonames) == len(aminoshorts)
 aminodict = {s:n for s, n in \
         zip(aminoshorts, aminonames)}
@@ -176,7 +217,7 @@ echo \\
  /' > 1in
 
 echo \\
-'Heating
+"Heating
  &cntrl
   imin=0, !Choose a molecular dynamics (MD) run
   ntx=1, !Read coordinates but not velocities
@@ -200,7 +241,7 @@ echo \\
  /
 &wt type='TEMP0', istep1=0, istep2=9000, value1=0.0, value2=300.0 /
 &wt type='TEMP0', istep1=9001, istep2=10000, value1=300.0, value2=300.0 /
-&wt type='END' / ' > 2in
+&wt type='END' / " > 2in
 
 echo \\
 'Production
@@ -235,11 +276,13 @@ cleanupfiles(){
 mkdir archieved
 mv 1* archieved
 mv 2* archieved
+mv 3in archieved
 mv tlsc archieved
+mv ambsc archieved
+mv leap.log archieved
+mv inpcrd archieved
 }
 
-touch date
-echo 'start at: '`date` >>timelog
 ############ Script starts here #############
 #
 #
@@ -254,9 +297,8 @@ cleanupfiles
 #
 #
 ############ Script running ends ############
-echo 'end at: '`date` >>timelog
 exit
-""".replace('MD_NSTLIM', str(MD_NSTLIM))
+"""
 
 if __name__ == '__main__':
     main()

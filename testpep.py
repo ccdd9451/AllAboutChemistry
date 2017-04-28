@@ -10,6 +10,7 @@ from xilio import dump, write
 
 ps.DEBUG = True
 ps.BASEDIR = Path('/home/kh621/test')
+ps.MD_NSTLIM = 5E4
 
 def setuptest():
     testdir = ps.BASEDIR
