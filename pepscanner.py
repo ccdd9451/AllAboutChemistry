@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # encoding utf-8
 
-import sys, os
+import sys
+import os
 from os import environ
 from pathlib import Path
 from subprocess import call, Popen, DEVNULL
@@ -11,7 +12,7 @@ from xilio import write, read, load, dump
 
 BASEDIR = Path('/home/kh621/PeptideSim')
 DEBUG = False
-MD_NSTLIM = 5E6
+MD_NSTLIM = 5 * 10**6
 
 env = environ
 scanner_self = os.path.join(sys.path[0], __file__)
@@ -19,7 +20,7 @@ topfile = BASEDIR / '.top'
 
 
 def main():
-    if (os.path.exists(BASEDIR / 'pep_queue') and not sys.argv[1:]):
+    if os.path.exists(BASEDIR / 'pep_queue') and not sys.argv[1:]:
         singlerun()
     else:
         print('Please Setup queue by calling queue_add method by')
@@ -55,6 +56,8 @@ def singlerun():
         raise OSError('Amber environments not set, quit')
 
     if not env.get('CUDA_VISIBLE_DEVICES'):
+        # Will also be used as a fake index when a non-cuda
+        # enviroment presented
         process_num = input('Please specify the gpu index for calculations:')
         env['CUDA_VISIBLE_DEVICES'] = str(process_num)
         add_thread(process_num)
@@ -70,9 +73,13 @@ def singlerun():
     setupfiles(workdir, pepname, env)
 
     call(['./ambsc'], cwd=workdir, env=env, stdout=DEVNULL)
-    eng = parseptot(workdir)
+    try:
+        eng = parseptot(workdir)
+    except IndexError:
+        pep_failed_record(workpep)
+    else:
+        pep_finish_and_store_result(workpep, eng)
 
-    pep_finish_and_store_result(workpep, eng)
     run_next(process_num)
 
 
@@ -106,8 +113,15 @@ def get_pep_from_queue(process_num):
 
 def pep_finish_and_store_result(workpep, eng):
     with shelf_with_locker() as shelf:
-        shelf['running'].pop(workpep)
+        _ = shelf['running'].pop(workpep)
         shelf['finished'][workpep] = eng
+
+
+def pep_failed_record(workpep):
+    with shelf_with_locker() as shelf:
+        process_num = shelf['running'].pop(workpep)
+        shelf .setdefault('failed', {})\
+              .__setitem__(workpep, process_num)
 
 
 def add_thread(process_num):
@@ -151,7 +165,13 @@ def setupfiles(directory, pseqs, env):
     except FileExistsError as err:
         # Skip mkdir if dir is exist, only print out error
         print('War: DIR EXIST ', err)
-    ambscript = script.replace('MD_NSTLIM', str(int(MD_NSTLIM)))
+    callmethod = 'callcuda' if env.get('CUDA_HOME') else 'callsander'
+    ambscript = script.replace('MD_NSTLIM', str(int(MD_NSTLIM)))\
+                    .replace('CALLMETHOD', callmethod)
+    amber_version = env.get('AMBER_VERSION')
+    if not amber_version:
+        raise OSError('Enviroment AMBER_VERSION not set')
+    tleapfile = tleapfile_versions[amber_version]
     write(directory / 'ambsc', ambscript, executable=True)
     write(directory / 'tlsc', tleapfile.format(names=pseqs))
     call(['tleap', '-s', '-f', 'tlsc'], cwd=directory, env=env, stdout=DEVNULL)
@@ -172,13 +192,23 @@ def convert_short_to_long(short):
     return long
 
 
-tleapfile = """\
+tleapfile_v14 = """\
 source leaprc.ff14SB
 foo = sequence {{ {names} }}
 set default pbradii mbondi3
 saveamberparm foo prmtop inpcrd
 quit
 """
+
+tleapfile_v16 = """\
+source leaprc.protein.ff14SB
+foo = sequence {{ {names} }}
+set default pbradii mbondi3
+saveamberparm foo prmtop inpcrd
+quit
+"""
+
+tleapfile_versions = {'14': tleapfile_v14, '16': tleapfile_v16}
 
 script = """\
 #!/bin/bash
@@ -196,6 +226,25 @@ pmemd.cuda -O \\
 	-inf 2mdinfo
 
 pmemd.cuda -O \\
+	-i 3in -o 3out \\
+	-p prmtop -c 2rst \\
+	-r 3rst -x 3.mdcrd \\
+	-inf 3info
+}
+
+callsander(){
+sander -O \\
+	-i 1in -o 1out \\
+	-p prmtop -c inpcrd \\
+	-r 1rst -inf 1mdinfo
+
+sander -O \\
+	-i 2in -o 2out \\
+	-p prmtop -c 1rst \\
+	-r 2rst -x 2.mdcrd \\
+	-inf 2mdinfo
+
+sander -O \\
 	-i 3in -o 3out \\
 	-p prmtop -c 2rst \\
 	-r 3rst -x 3.mdcrd \\
@@ -289,7 +338,7 @@ mv inpcrd archieved
 #
 
 expandfiles
-callcuda
+CALLMETHOD
 processdat
 cleanupfiles
 
