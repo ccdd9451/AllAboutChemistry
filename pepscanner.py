@@ -54,6 +54,8 @@ def singlerun():
 
     if not env.get('AMBERHOME'):
         raise OSError('Amber environments not set, quit')
+    if not env.get('AMBER_VERSION'):
+        raise OSError('Enviroment AMBER_VERSION not set')
 
     if not env.get('CUDA_VISIBLE_DEVICES'):
         # Will also be used as a fake index when a non-cuda
@@ -160,6 +162,9 @@ def parseptot(directory):
 
 
 def setupfiles(directory, pseqs, env):
+    amber_version = env.get('AMBER_VERSION')
+    if not amber_version:
+        raise OSError('Enviroment AMBER_VERSION not set')
     try:
         os.mkdir(directory)
     except FileExistsError as err:
@@ -168,9 +173,6 @@ def setupfiles(directory, pseqs, env):
     callmethod = 'callcuda' if env.get('CUDA_HOME') else 'callsander'
     ambscript = script.replace('MD_NSTLIM', str(int(MD_NSTLIM)))\
                     .replace('CALLMETHOD', callmethod)
-    amber_version = env.get('AMBER_VERSION')
-    if not amber_version:
-        raise OSError('Enviroment AMBER_VERSION not set')
     tleapfile = tleapfile_versions[amber_version]
     write(directory / 'ambsc', ambscript, executable=True)
     write(directory / 'tlsc', tleapfile.format(names=pseqs))
