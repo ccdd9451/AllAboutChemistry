@@ -330,6 +330,7 @@ mv tlsc archieved
 mv ambsc archieved
 mv leap.log archieved
 mv inpcrd archieved
+mv 3info archieved
 }
 
 ############ Script starts here #############
